@@ -7,7 +7,6 @@ This repository provides a standalone C++ implementation of the RCS-PQ construct
 - Linux (tested build path), C++17 compiler (GCC 9+ recommended)
 - CMake 3.16+
 - OpenMP
-- AVX-512F or AVX2 CPU for SIMD acceleration; scalar fallback otherwise
 
 No external numerical library is required.
 
