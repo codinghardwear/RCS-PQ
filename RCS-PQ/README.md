@@ -1,14 +1,6 @@
 # RCS-PQ: Standalone PQ Construction
 
-This repository provides a standalone C++ implementation of the RCS-PQ construction path. It trains product-quantization codebooks and encodes vectors into PQ codes **without building an ANN graph, disk index, or search structure**. It does not require DiskANN, FAISS, Starling, MKL, or TSL/robin-map.
-
-The implementation is based on the RCS-PQ/CS-PQ source files supplied for this project and the standalone-relevant PQ path in the DiskANN 0.7.0 integration. DiskANN-derived portions retain their upstream MIT notice; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-## Included techniques
-
-1. **Ranking-aware scoring reformulation.** For L2 assignment, the kernel minimizes `0.5 * ||c||^2 - x dot c`, omitting the candidate-independent `||x||^2` term. During Lloyd training, the selected score is combined with the precomputed vector norm to recover the L2 residual used for termination.
-2. **Centroid-parallel SIMD.** SIMD lanes represent candidate centroids. The codebook is stored in a dimension-major SoA layout `[subdimension][padded_centroid]`; AVX-512 uses 16 centroid lanes, AVX2 uses 8, and a scalar fallback is provided. For subdimensions up to 8, the dimension loop has a compiler-unrolled path.
-3. **Cache-friendly chunk-centric encoding.** For each input batch, the implementation iterates over PQ chunks, reuses the prepared codebook for all vectors in that batch, and writes only the selected centroid IDs. It does not materialize an `N x K` distance matrix or an `N x K x chunks` score tensor.
+This repository provides a standalone C++ implementation of the RCS-PQ construction path. It trains product-quantization codebooks and encodes vectors into PQ codes.
 
 ## Requirements
 
@@ -37,8 +29,6 @@ Check the selected backend:
 At runtime, the program prints the selected SIMD backend.
 
 ## Input format
-
-The input must be a DiskANN-style float32 matrix file:
 
 ```text
 uint32 number_of_vectors
@@ -123,8 +113,6 @@ echo "PID=$! RUN_ID=$RUN_ID"
 | `--batch-size` | 262144 | Number of vectors encoded in one batch |
 | `--metric` | l2 | `l2`, `ip`, or `cosine` scoring during final encoding |
 
-The sample is selected with the same Bernoulli-sampling model as the DiskANN integration. The actual selected sample count is printed and recorded in `config.json`; it is not guaranteed to equal `N * train_ratio` exactly.
-
 ### Metric scope
 
 The current evaluated RCS-PQ path and default configuration use L2. The encoding score supports:
@@ -132,8 +120,6 @@ The current evaluated RCS-PQ path and default configuration use L2. The encoding
 - L2: `0.5 * ||c||^2 - x dot c`
 - Inner product: `-x dot c`
 - Cosine: `-x dot (c / ||c||)`
-
-As in the supplied DiskANN integration, codebook training uses standard L2 Lloyd assignment and mean updates. For `ip` and `cosine`, the training data is not mean-centered and the final encoding assignment uses the selected metric score; this does **not** claim to implement an IP-optimal or spherical-k-means training objective. Use `l2` for reproducing the paper's SIFT experiments.
 
 ## Output format
 
@@ -148,34 +134,11 @@ All `.bin` outputs use a simple matrix format: two little-endian `uint32` values
 | `config.json` | — | Configuration and timing metadata. |
 | `summary.txt` | — | Human-readable run summary. |
 
-The output files are sufficient to reconstruct the PQ approximation: for vector `i`, chunk `j` uses centroid `codes[i,j]` from the corresponding dimension range in `pivots.bin`; add `centroid.bin` back for L2-centered data. The standalone `pivots.bin` is a simple matrix file, not the packed DiskANN pivot metadata container.
+The output files are sufficient to reconstruct the PQ approximation: for vector `i`, chunk `j` uses centroid `codes[i,j]` from the corresponding dimension range in `pivots.bin`; add `centroid.bin` back for L2-centered data.
 
 ## Timing definitions
 
 - `sampling_seconds`: reading the input once and selecting the training sample. This is reported separately.
-- `training_seconds`: mean/centering, per-chunk k-means++ initialization, and Lloyd training. This excludes sample extraction, matching the PQ-training timer boundary in the DiskANN integration.
+- `training_seconds`: mean/centering, per-chunk k-means++ initialization, and Lloyd training.
 - `encoding_seconds`: codebook preparation, a second input scan, centering of each L2 batch, and final PQ assignment/encoding.
 - `total_seconds`: end-to-end elapsed time measured by the standalone process, including sampling, training, output writing, and encoding.
-
-## Reproducibility notes
-
-- Fix both `--sample-seed` and `--kmeans-seed` when comparing thread counts.
-- Keep the compiler, CPU target flags, OpenMP runtime, and input file identical across runs.
-- The implementation is deterministic in its sample selection and k-means++ random choices for a fixed standard-library implementation. Floating-point reduction order can still vary with thread count and compiler/runtime.
-- Do not compare a cold-cache run with a warm-cache run without reporting the difference. The standalone program does not prewarm the input file automatically.
-
-## Source navigation
-
-See [docs/algorithm_mapping.md](docs/algorithm_mapping.md) for a direct mapping from the paper's three techniques to the corresponding standalone functions.
-
-## Scope and limitations
-
-- This is a standalone **PQ construction** tool, not an ANN index builder or search engine.
-- No FAISS, Starling, or DiskANN integration is included; this package is the independent PQ builder only. It does not depend on those frameworks.
-- Input is currently float32 DiskANN-style `.bin` only.
-- OPQ, residual PQ, GPU execution, and multi-byte codes (`K > 256`) are not implemented in this standalone package.
-- The codebook training path is the PQ-specific L2 Lloyd path. Metric-aware IP/cosine support is currently applied to final encoding as described above.
-
-## Licensing
-
-The DiskANN-derived portions are identified in `THIRD_PARTY_NOTICES.md`, with the MIT text included at `LICENSES/DiskANN-MIT.txt`. This package does not assert a project-wide license for RCS-PQ-specific contributions; choose and add one before a public release if required.
